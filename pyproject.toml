@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obs-mcp"
+version = "0.1.0"
+description = "Local MCP server to drive OBS Studio: scene setup, track-separated recording (Source Record), and post-recording animated-camera compositing for hand-off to short-form-editor-mcp."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.2.0",
+    "obsws-python>=1.7.0",
+]
+
+[project.optional-dependencies]
+# compositing + optional background removal are pulled in lazily so the OBS
+# control half of the server works without the heavy video deps installed.
+compose = ["moviepy>=2.0.0", "numpy>=1.26"]
+matting = ["rembg>=2.0.0", "onnxruntime>=1.17"]
+
+[tool.setuptools.packages.find]
+include = ["obs_mcp*"]
