@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environment
+.venv/
+venv/
+
+# Recordings and generated media (large, regenerable)
+recordings/
+*.mkv
+*.mp4
+*.mov
+*.png
+*.jpg
+
+# ML model weights (downloaded on demand)
+*.onnx
+*.pt
+
+# Local dev scratch scripts (contain the OBS websocket password)
+probe.py
+test_record.py
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
