@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from . import timeline
+from . import graphics, timeline
 
 
 def compose(
@@ -21,10 +21,12 @@ def compose(
     output_path: str,
     remove_background: bool = False,
     max_duration: float | None = None,
+    overlays: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Render screen + animated camera -> output_path. ``keyframes`` is the raw
-    timeline (presets allowed); it is normalized here. ``max_duration`` optionally
-    caps the output length. Returns output info."""
+    """Render screen + animated camera (+ optional animated graphic overlays) ->
+    output_path. ``keyframes`` is the raw camera timeline (presets allowed).
+    ``overlays`` is a list of animated graphic specs (see _build_overlay).
+    ``max_duration`` optionally caps the output length. Returns output info."""
     for p, label in ((screen_path, "screen"), (camera_path, "camera")):
         if not os.path.isfile(p):
             raise FileNotFoundError(f"{label} file not found: {p}")
@@ -53,7 +55,11 @@ def compose(
         .with_position(lambda t: (rect(t)[0], rect(t)[1]))
     )
 
-    final = CompositeVideoClip([screen, cam_layer], size=(fw, fh)).with_duration(duration)
+    layers = [screen, cam_layer]
+    overlay_clips = [_build_overlay(o, fw, fh, duration) for o in (overlays or [])]
+    layers.extend(overlay_clips)  # overlays render on top of the camera
+
+    final = CompositeVideoClip(layers, size=(fw, fh)).with_duration(duration)
     if screen.audio is not None:
         final = final.with_audio(screen.audio.subclipped(0, duration))
 
@@ -63,7 +69,7 @@ def compose(
         fps=screen.fps, preset="medium", threads=os.cpu_count() or 4,
         logger=None,
     )
-    for clip in (final, cam_layer, camera, screen):
+    for clip in [final, cam_layer, camera, screen, *overlay_clips]:
         try:
             clip.close()
         except Exception:  # noqa: BLE001
@@ -73,8 +79,64 @@ def compose(
         "size": [fw, fh],
         "duration": round(duration, 2),
         "keyframes": len(kfs),
+        "overlays": len(overlay_clips),
         "background_removed": remove_background,
     }
+
+
+def _load_rgba(path: str):  # type: ignore[no-untyped-def]
+    import numpy as np
+    from PIL import Image
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"overlay image not found: {path}")
+    return np.array(Image.open(path).convert("RGBA"))
+
+
+def _build_overlay(spec: dict[str, Any], fw: int, fh: int, duration: float):  # type: ignore[no-untyped-def]
+    """Build one animated overlay layer.
+
+    spec source (one of):
+      - {"kind": "arrow"|"ring"|"box"|"label", ...params}  (built-in shape)
+      - {"svg": "<inline svg>"}                            (custom SVG)
+      - {"image": "path.png"}                              (pre-rendered RGBA, e.g.
+                                                            a Gemini-generated graphic)
+    plus: anchor [ax,ay] (point placed on pos; defaults per shape / center),
+    keyframes [{t,pos,scale,ease}], t_in, t_out, fade (s), opacity.
+    """
+    from moviepy import ImageClip
+    from moviepy.video.fx import CrossFadeIn, CrossFadeOut
+
+    kfs = timeline.normalize_overlay_keyframes(spec["keyframes"])
+    if "image" in spec:
+        arr = _load_rgba(spec["image"])
+        anchor = spec.get("anchor", [0.5, 0.5])
+    else:
+        svg, anchor = graphics.build(spec)
+        base_w = max(k["scale"] for k in kfs) * fw
+        arr = graphics.render_svg(svg, int(min(max(base_w * 2, 64), 2 * fw)))
+    oh, ow = arr.shape[0], arr.shape[1]
+    aspect = ow / oh
+
+    t_in = max(0.0, min(float(spec.get("t_in", kfs[0]["t"])), duration))
+    t_out = max(t_in + 0.1, min(float(spec.get("t_out", duration)), duration))
+
+    base = ImageClip(arr[:, :, :3]).with_mask(ImageClip(arr[:, :, 3] / 255.0, is_mask=True))
+
+    def r(local_t: float) -> tuple[int, int, int, int]:
+        return timeline.sample_overlay(kfs, t_in + local_t, fw, fh, aspect, anchor)
+
+    layer = (
+        base.with_start(t_in).with_duration(t_out - t_in)
+        .resized(lambda lt: (r(lt)[2], r(lt)[3]))
+        .with_position(lambda lt: (r(lt)[0], r(lt)[1]))
+    )
+    opacity = float(spec.get("opacity", 1.0))
+    if opacity < 1.0:
+        layer = layer.with_opacity(opacity)
+    fade = min(float(spec.get("fade", 0.3)), (t_out - t_in) / 2.0)
+    if fade > 0:
+        layer = layer.with_effects([CrossFadeIn(fade), CrossFadeOut(fade)])
+    return layer
 
 
 def _matte(camera_clip):  # type: ignore[no-untyped-def]

@@ -145,3 +145,54 @@ def _ints(r: tuple[float, ...]) -> tuple[int, int, int, int]:
     # width/height must be >=2 and even-ish for encoders; clamp to >=2
     x, y, w, h = r
     return int(round(x)), int(round(y)), max(2, int(round(w))), max(2, int(round(h)))
+
+
+# -- overlay graphics (arrows/rings/labels/images) ---------------------------
+
+def normalize_overlay_keyframes(keyframes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Canonicalize overlay keyframes: each needs t, pos [nx, ny] (normalized screen
+    coords the ANCHOR lands on), scale (overlay width as a fraction of frame width),
+    ease. Sorted by time."""
+    if not keyframes:
+        raise ValueError("overlay has no keyframes")
+    out = []
+    for i, kf in enumerate(keyframes):
+        k = dict(kf)
+        if "t" not in k:
+            raise ValueError(f"overlay keyframe {i} missing 't'")
+        if "pos" not in k:
+            raise ValueError(f"overlay keyframe {i} missing 'pos' [nx, ny]")
+        k["t"] = float(k["t"])
+        k["pos"] = [float(k["pos"][0]), float(k["pos"][1])]
+        k["scale"] = float(k.get("scale", 0.12))
+        k["ease"] = k.get("ease", "inout")
+        out.append(k)
+    out.sort(key=lambda k: k["t"])
+    return out
+
+
+def sample_overlay(keyframes: list[dict[str, Any]], t: float, fw: int, fh: int,
+                   aspect: float, anchor: list[float]) -> tuple[int, int, int, int]:
+    """Interpolate an overlay's pixel rect (x, y, w, h) at time t. `aspect` = the
+    graphic's width/height; `anchor` = [ax, ay] point on the graphic placed at pos."""
+    kfs = keyframes
+
+    def at(kf: dict[str, Any]) -> tuple[float, float, float, float]:
+        draw_w = kf["scale"] * fw
+        draw_h = draw_w / aspect
+        x = kf["pos"][0] * fw - anchor[0] * draw_w
+        y = kf["pos"][1] * fh - anchor[1] * draw_h
+        return x, y, draw_w, draw_h
+
+    if t <= kfs[0]["t"]:
+        return _ints(at(kfs[0]))
+    if t >= kfs[-1]["t"]:
+        return _ints(at(kfs[-1]))
+    for a, b in zip(kfs, kfs[1:]):
+        if a["t"] <= t <= b["t"]:
+            span = b["t"] - a["t"]
+            p = 0.0 if span <= 0 else (t - a["t"]) / span
+            e = _ease(p, b["ease"])
+            ra, rb = at(a), at(b)
+            return _ints(tuple(ra[i] + (rb[i] - ra[i]) * e for i in range(4)))
+    return _ints(at(kfs[-1]))

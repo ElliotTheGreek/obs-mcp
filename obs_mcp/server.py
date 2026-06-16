@@ -136,6 +136,7 @@ def compose_camera(
     output_path: str = "",
     remove_background: bool = False,
     max_duration: float | None = None,
+    overlays: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Composite the isolated camera over the clean screen recording, ANIMATING the
     camera's position and scale along a keyframe timeline, and write a final mp4
@@ -157,6 +158,26 @@ def compose_camera(
 
     remove_background: AI-matte the camera so the subject floats (no rectangle).
     Defaults to the plain rectangle.
+
+    overlays: optional list of animated graphics that point at / highlight screen
+    regions, rendered ON TOP of the camera. Each overlay:
+      source (one of): {"kind": "arrow"|"ring"|"box"|"label", ...params} |
+                       {"svg": "<inline svg>"} | {"image": "path-to-rgba.png"}
+        - arrow params: direction ("up"/"down"/"left"/"right"/"down-right"/... or an
+          angle), color, stroke. The arrow's TIP is the anchor (lands on `pos`).
+        - ring/box/label params: color, stroke (box: aspect; label: text, text_color).
+      anchor: [ax, ay] in 0..1 of the graphic's own box that lands on `pos` (defaults
+        per shape; arrow defaults to its tip).
+      keyframes: [{"t":sec, "pos":[nx,ny], "scale":frac_of_frame_width, "ease":...}].
+        `pos` is the normalized screen coordinate the anchor sits on. Use grab_frame
+        to find coordinates by reading a frame.
+      t_in / t_out: when the overlay appears/disappears (seconds). fade: fade s.
+        opacity: 0..1.
+    Example: point a red arrow at a button at (0.82,0.31) for 2-6s, then a label:
+      [{"kind":"arrow","direction":"up","color":"#ff3b30",
+        "keyframes":[{"t":0,"pos":[0.82,0.31],"scale":0.08}],"t_in":2,"t_out":6},
+       {"kind":"label","text":"Click here","keyframes":[{"t":0,"pos":[0.82,0.4],
+        "scale":0.16}],"t_in":2.3,"t_out":6}]
     """
     if not output_path:
         os.makedirs(config.CAMERA_DIR, exist_ok=True)
@@ -165,4 +186,50 @@ def compose_camera(
     return compositor.compose(
         screen_path, camera_path, keyframes, output_path,
         remove_background=remove_background, max_duration=max_duration,
+        overlays=overlays,
     )
+
+
+@mcp.tool()
+def grab_frame(video_path: str, t: float, output_path: str = "") -> dict[str, Any]:
+    """Extract a single frame from a video at time `t` (seconds) to a PNG, so the
+    agent can READ it and locate the normalized screen coordinates (x/width, y/height)
+    to point overlays at. Returns the frame path and the video's [width, height]."""
+    import subprocess
+
+    if not os.path.isfile(video_path):
+        raise FileNotFoundError(video_path)
+    if not output_path:
+        os.makedirs(config.CAMERA_DIR, exist_ok=True)
+        output_path = os.path.join(config.CAMERA_DIR, f"frame_{t:.2f}.png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-ss", str(t), "-i", video_path,
+         "-frames:v", "1", output_path],
+        check=True,
+    )
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0", video_path],
+        capture_output=True, text=True, check=True,
+    )
+    w, h = (int(x) for x in probe.stdout.strip().split(","))
+    return {"frame": output_path, "size": [w, h], "t": t}
+
+
+@mcp.tool()
+def list_graphics() -> dict[str, Any]:
+    """The built-in overlay graphic kinds and their parameters, for use in
+    compose_camera `overlays`. You can also pass a custom inline `svg` or a
+    pre-rendered `image` (e.g. a Gemini-generated transparent PNG)."""
+    return {
+        "arrow": {"params": ["direction", "color", "stroke"],
+                  "anchor": "tip (lands on pos)",
+                  "direction": ["up", "down", "left", "right", "up-left", "up-right",
+                                "down-left", "down-right", "or angle in degrees"]},
+        "ring": {"params": ["color", "stroke"], "anchor": "center"},
+        "box": {"params": ["color", "stroke", "aspect", "radius"], "anchor": "center"},
+        "label": {"params": ["text", "color", "text_color", "font_size"], "anchor": "center"},
+        "custom_svg": {"source": {"svg": "<inline svg string>"}, "anchor": "[ax,ay] you set"},
+        "image": {"source": {"image": "path-to-rgba.png"},
+                  "note": "use Gemini/image-tools to generate a transparent graphic, pass its path"},
+    }

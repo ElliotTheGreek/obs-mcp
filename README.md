@@ -54,6 +54,42 @@ Each keyframe has a time `t` (seconds) plus either a `preset` or explicit
 
 The camera holds the first keyframe before it and the last after it, easing between.
 
+## Overlay graphics (pointers, highlights, callouts)
+
+`compose_camera` also takes an `overlays` list — animated graphics rendered on top of
+the camera that point at / highlight regions of the screen. Use `grab_frame` to pull a
+frame and read off the normalized coordinates `[x/width, y/height]` of the target, then
+anchor an overlay there.
+
+Each overlay's source is one of:
+- **built-in shape** — `{"kind": "arrow"|"ring"|"box"|"label", ...}`
+  - `arrow` (its **tip** is the anchor): `direction` (`up`/`down`/`left`/`right`/
+    `up-left`/`up-right`/`down-left`/`down-right`, or an angle), `color`, `stroke`.
+  - `ring` / `box` / `label`: `color`, `stroke` (box: `aspect`, `radius`; label:
+    `text`, `text_color`, `font_size`).
+- **custom SVG** — `{"svg": "<inline svg>", "anchor": [ax, ay]}` (resvg-rendered).
+- **image** — `{"image": "path-to-rgba.png"}` — any transparent PNG, e.g. one made
+  with the `image-tools` / Gemini tools (`gemini_generate_image` → `remove_background`).
+
+Animation fields: `anchor` `[ax,ay]` (point on the graphic placed on `pos`; defaults
+per shape), `keyframes` `[{t, pos:[nx,ny], scale, ease}]` (`pos` is the normalized
+screen coordinate the anchor sits on; `scale` is the graphic width as a fraction of
+frame width), `t_in`/`t_out` (appear/disappear seconds), `fade` (seconds), `opacity`.
+
+```json
+"overlays": [
+  {"kind": "arrow", "direction": "left", "color": "#ff3b30",
+   "keyframes": [{"t":0,"pos":[0.14,0.30],"scale":0.10},
+                 {"t":4,"pos":[0.45,0.22],"scale":0.10}], "t_in":1, "t_out":9},
+  {"kind": "ring", "color": "#34c759",
+   "keyframes": [{"t":0,"pos":[0.52,0.45],"scale":0.13}], "t_in":3, "t_out":9},
+  {"image": "badge.png",
+   "keyframes": [{"t":0,"pos":[0.80,0.30],"scale":0.17}], "t_in":5, "t_out":9, "fade":0.4}
+]
+```
+
+`list_graphics` returns the built-in kinds + params.
+
 ## One-time setup (in OBS)
 
 1. **Enable the WebSocket server**: *Tools → WebSocket Server Settings* → enable;
