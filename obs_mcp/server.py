@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from . import compositor, config
+from . import camera_mix, compositor, config
 from .obs_client import Device, OBSClient
 from .ws import OBSError
 
@@ -137,6 +137,7 @@ def compose_camera(
     remove_background: bool = False,
     max_duration: float | None = None,
     overlays: list[dict[str, Any]] | None = None,
+    blurs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Composite the isolated camera over the clean screen recording, ANIMATING the
     camera's position and scale along a keyframe timeline, and write a final mp4
@@ -173,6 +174,21 @@ def compose_camera(
         to find coordinates by reading a frame.
       t_in / t_out: when the overlay appears/disappears (seconds). fade: fade s.
         opacity: 0..1.
+
+    blurs: optional list of animated screen blur effects (applied UNDER the camera,
+    so the camera/overlays stay sharp). Each blur:
+      shape: "rect" | "circle" | "svg" (with "svg":"<silhouette svg>").
+      invert: false = blur INSIDE the shape (redact a region); true = blur everything
+        OUTSIDE the shape (focus/spotlight an area).
+      strength: blur radius px (default 18). feather: soft-edge px (default 10).
+        aspect: shape width/height (default 1; set for wide rects). dim: 0..1 extra
+        darkening of the blurred area (nice for focus).
+      keyframes: [{"t":sec,"pos":[nx,ny],"scale":frac_of_frame_width,"ease":...}]
+        ("pos" = the shape's normalized CENTER). t_in/t_out/fade like overlays.
+    Examples: redact a region -> {"shape":"rect","aspect":4,"keyframes":[{"t":0,
+    "pos":[0.5,0.12],"scale":0.4}],"t_in":0,"t_out":9}; focus a spot ->
+    {"shape":"circle","invert":true,"dim":0.3,"keyframes":[{"t":0,"pos":[0.4,0.4],
+    "scale":0.35}],"t_in":2,"t_out":8}.
     Example: point a red arrow at a button at (0.82,0.31) for 2-6s, then a label:
       [{"kind":"arrow","direction":"up","color":"#ff3b30",
         "keyframes":[{"t":0,"pos":[0.82,0.31],"scale":0.08}],"t_in":2,"t_out":6},
@@ -186,13 +202,47 @@ def compose_camera(
     return compositor.compose(
         screen_path, camera_path, keyframes, output_path,
         remove_background=remove_background, max_duration=max_duration,
-        overlays=overlays,
+        overlays=overlays, blurs=blurs,
     )
 
 
 @mcp.tool()
-def grab_frame(video_path: str, t: float, output_path: str = "") -> dict[str, Any]:
-    """Extract a single frame from a video at time `t` (seconds) to a PNG, so the
+def mix_camera(
+    project_id: str,
+    edl_id: str,
+    camera_path: str,
+    keyframes: list[dict[str, Any]] | None = None,
+    remove_background: bool = True,
+    output_path: str = "",
+    rematte: bool = False,
+) -> dict[str, Any]:
+    """Mix the separately-recorded camera back into a project's CUT screen video,
+    background-removed and floating, with animated position. For the long-form
+    workflow: record screen+camera separately -> create_project(screen) -> transcribe
+    -> cut down (render an EDL) -> THEN mix_camera to bring your face back in.
+
+    It (1) cuts the `camera_path` file to the SAME segment times as the screen cut
+    (perfect sync), (2) mattes out the background on the GPU (RobustVideoMatting), and
+    (3) composites the floating camera over the cut screen using `keyframes`.
+
+    The cut + matte are CACHED per (project_id, edl_id), so calling again with new
+    `keyframes` to REPOSITION ("move me to the top-left for this part") only re-runs the
+    cheap composite. Pass rematte=True after changing the EDL/cut to rebuild the cache.
+
+    keyframes: same model as compose_camera (preset or scale+anchor/pos+ease, holds
+    first before / last after). Default: bottom-right PiP for the whole clip.
+    remove_background: GPU matte the camera (default True). False = plain rectangle cam.
+
+    Requires render(project_id, edl_id=...) to have produced the cut screen first.
+    """
+    return camera_mix.mix_camera(
+        project_id, edl_id, camera_path, keyframes=keyframes,
+        remove_background=remove_background, output_path=output_path, rematte=rematte)
+
+
+@mcp.tool()
+def grab_screen_frame(video_path: str, t: float, output_path: str = "") -> dict[str, Any]:
+    """Extract a single frame from a video file at time `t` (seconds) to a PNG, so the
     agent can READ it and locate the normalized screen coordinates (x/width, y/height)
     to point overlays at. Returns the frame path and the video's [width, height]."""
     import subprocess

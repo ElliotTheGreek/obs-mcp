@@ -90,6 +90,35 @@ frame width), `t_in`/`t_out` (appear/disappear seconds), `fade` (seconds), `opac
 
 `list_graphics` returns the built-in kinds + params.
 
+## Blur effects (redact a region / focus an area)
+
+`compose_camera` also takes a `blurs` list — animated screen blurs applied *under* the
+camera (so the camera and overlays stay sharp on top). Both modes are one operation,
+"blur where the mask is 1":
+
+- **region blur (redact)** — `invert: false`: blur *inside* the shape (hide a password,
+  a name, a panel).
+- **focus / spotlight** — `invert: true`: blur everything *outside* the shape, optionally
+  dimming it, to pull the eye to one area.
+
+Each blur:
+- `shape`: `rect` | `circle` | `svg` (with `"svg": "<silhouette>"`).
+- `invert`: redact (false) vs focus (true). `strength`: blur radius px. `feather`:
+  soft-edge px. `aspect`: shape width/height (set for wide rects). `dim`: 0..1 extra
+  darkening of the blurred area (nice for focus).
+- `keyframes`: `[{t, pos:[nx,ny], scale, ease}]` (`pos` = shape's normalized centre;
+  `scale` = width as a fraction of frame width) — so the blurred/focused region can
+  move and resize. `t_in`/`t_out`/`fade` like overlays.
+
+```json
+"blurs": [
+  {"shape":"rect","aspect":6.8,"strength":22,
+   "keyframes":[{"t":0,"pos":[0.5,0.82],"scale":0.95}], "t_in":0, "t_out":9},
+  {"shape":"circle","invert":true,"dim":0.35,"feather":40,
+   "keyframes":[{"t":0,"pos":[0.45,0.40],"scale":0.42}], "t_in":2, "t_out":8}
+]
+```
+
 ## One-time setup (in OBS)
 
 1. **Enable the WebSocket server**: *Tools → WebSocket Server Settings* → enable;

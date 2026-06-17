@@ -22,10 +22,12 @@ def compose(
     remove_background: bool = False,
     max_duration: float | None = None,
     overlays: list[dict[str, Any]] | None = None,
+    blurs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Render screen + animated camera (+ optional animated graphic overlays) ->
-    output_path. ``keyframes`` is the raw camera timeline (presets allowed).
-    ``overlays`` is a list of animated graphic specs (see _build_overlay).
+    """Render screen + animated camera (+ optional animated graphic overlays + blur
+    effects) -> output_path. ``keyframes`` is the raw camera timeline (presets
+    allowed). ``overlays`` is a list of animated graphic specs (see _build_overlay).
+    ``blurs`` is a list of animated screen blur specs (see _apply_blurs).
     ``max_duration`` optionally caps the output length. Returns output info."""
     for p, label in ((screen_path, "screen"), (camera_path, "camera")):
         if not os.path.isfile(p):
@@ -43,6 +45,12 @@ def compose(
     duration = min(screen.duration, camera.duration)
     if max_duration is not None:
         duration = min(duration, max_duration)
+    screen_audio = screen.audio
+    screen_fps = screen.fps
+
+    if blurs:
+        from . import blur as blurmod
+        screen = screen.transform(blurmod.make_processor(blurs, fw, fh, duration))
 
     if remove_background:
         camera = _matte(camera)
@@ -60,13 +68,13 @@ def compose(
     layers.extend(overlay_clips)  # overlays render on top of the camera
 
     final = CompositeVideoClip(layers, size=(fw, fh)).with_duration(duration)
-    if screen.audio is not None:
-        final = final.with_audio(screen.audio.subclipped(0, duration))
+    if screen_audio is not None:
+        final = final.with_audio(screen_audio.subclipped(0, duration))
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     final.write_videofile(
         output_path, codec="libx264", audio_codec="aac",
-        fps=screen.fps, preset="medium", threads=os.cpu_count() or 4,
+        fps=screen_fps, preset="medium", threads=os.cpu_count() or 4,
         logger=None,
     )
     for clip in [final, cam_layer, camera, screen, *overlay_clips]:
@@ -80,6 +88,7 @@ def compose(
         "duration": round(duration, 2),
         "keyframes": len(kfs),
         "overlays": len(overlay_clips),
+        "blurs": len(blurs or []),
         "background_removed": remove_background,
     }
 

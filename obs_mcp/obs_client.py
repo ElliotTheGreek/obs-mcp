@@ -187,6 +187,9 @@ class OBSClient:
             "record_mode": 3, "path": record_dir,
             "filename_formatting": "camera_%CCYY-%MM-%DD_%hh-%mm-%ss",
             "rec_format": "mkv", "rate_control": "CBR", "scale_type": 3,
+            # UNCAP the camera file: the plugin defaults to splitting at 900s/2048MB,
+            # which would chop a 30-40 min take. 0 = no limit.
+            "max_time_sec": 0, "max_size_mb": 0,
         }
         existing = self.req("GetSourceFilterList", {"sourceName": source_name}).get("filters", [])
         if any(f["filterName"] == "ObsMcpSourceRecord" for f in existing):
